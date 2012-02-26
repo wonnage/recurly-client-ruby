@@ -5,159 +5,92 @@ describe Recurly.js do
 
   describe "private_key" do
     it "must be assignable" do
-      js.private_key = 'a_private_key'
-      js.private_key.must_equal 'a_private_key'
+      Recurly.js.private_key = 'a_private_key'
+      Recurly.js.private_key.should == 'a_private_key'
     end
 
     it "must raise an exception when not set" do
-      if js.instance_variable_defined? :@private_key
-        js.send :remove_instance_variable, :@private_key
+      if Recurly.js.instance_variable_defined? :@private_key
+        Recurly.js.send :remove_instance_variable, :@private_key
       end
-      proc { js.private_key }.must_raise ConfigurationError
+      lambda { Recurly.js.private_key }.should raise_exception(ConfigurationError)
     end
 
     it "must raise an exception when set to nil" do
-      js.private_key = nil
-      proc { js.private_key }.must_raise ConfigurationError
+      Recurly.js.private_key = nil
+      lambda { Recurly.js.private_key }.should raise_exception(ConfigurationError)
     end
   end
 
-  describe "digest" do
-    let(:digest) { js.method :digest }
-
-    it "must ignore empty arrays, hashes, strings, and nil" do
-      digest.call([[], {}, '', nil]).must_equal '[]'
+  describe "#generate_signature" do
+    before(:each) do
+      Recurly.js.private_key = '0123456789abcdef0123456789abcdef'
+      Time.stub(:now).and_return 1329942896
     end
 
-    it "must encode nested arrays and hashes" do
-      digest.call(
-        :a => [1, 2, 3], :b => { :c => '123', :d => '456' }
-      ).must_equal '[a:[1,2,3],b:[c:123,d:456]]'
+    it "should sign transaction request" do
+      signature = Recurly.js.generate_signature({
+        'account' => { 'account_code' => '123' },
+        'transaction' => {
+          'amount_in_cents' => 5000,
+          'currency' => 'USD'
+        }
+      })
+
+      signature.should == "5dcbd65498c62c552a6f78edfb117cada8cb4f00|account[account_code]=123&timestamp=1329942896&transaction[amount_in_cents]=5000&transaction[currency]=USD"
     end
 
-    it "must alphabetize keys" do
-      digest.call(:a => 1, :c => 3, :b => 2).must_equal '[a:1,b:2,c:3]'
+    it "should sign subscription request" do
+      signature = Recurly.js.generate_signature({
+        'account' => { 'account_code' => '123' },
+        'subscription' => {
+          'plan_code' => 'gold'
+        }
+      })
+
+      signature.should == "68d95a0bbc289e564bcb519511676d84d4a4cb96|account[account_code]=123&subscription[plan_code]=gold&timestamp=1329942896"
+    end
+  end
+  
+  describe "#validate_signature!" do
+    before(:each) do
+      Recurly.js.private_key = '0123456789abcdef0123456789abcdef'
+      Time.stub(:now).and_return 1329942896
     end
 
-    it "must treat hashes with numeric indices as arrays" do
-      digest.call('1' => 4, '2' => 5, '3' => 6).must_equal '[4,5,6]'
+    it "should validate a signature" do
+      signature = 'c595b8093d7c1549fff7c418dcda80a310b35bc2|account[account_code]=112358132134&timestamp=1329942996'
+      signature_data = Recurly.js.validate_signature! signature
+      signature_data['account']['account_code'].should == '112358132134'
     end
 
-    it "must escape syntax characters" do
-      digest.call(:syntax => ' \\ [ ] : , ').must_equal(
-        '[syntax: \\\\ \[ \] \: \, ]'
-      )
+    it "should raise an exception if the timestamp is old" do
+      signature = 'f94a0c2b687c57be3b4cba59813c1aacba226cb5|account[account_code]=112358132134&timestamp=1329932896'
+      lambda {
+        signature_data = Recurly.js.validate_signature! signature
+      }.should raise_exception(Recurly::JS::RequestTooOldError)
     end
   end
 
-  describe "verification" do
-    let(:sign) { js.method :sign }
-    let(:verify) { js.method :verify! }
-    let(:private_key) { '0123456789abcdef0123456789abcdef' }
-    let(:timestamp) { 1312806801 }
-    let(:signature) { "fb5194a51aa97996cdb995a89064764c5c1bfd93-#{timestamp}" }
-
-    class MockTime
-      class << self
-        attr_accessor :now
-      end
+  describe "legacy signatures" do
+    before(:each) do
+      Recurly.js.private_key = '0123456789abcdef0123456789abcdef'
+      Time.stub(:now).and_return 1329942896
     end
 
-    before do
-      js.private_key = private_key
-      @time = Time
-      Object.const_set :Time, MockTime
-      Time.now = @time.at timestamp
+    it "should sign update billing info request" do
+      signature = Recurly.js.sign_billing_info('123')
+      signature.should == "1934b44c3fba8b6da31c16032f07ecaa24496267|account[account_code]=123&timestamp=1329942896"
     end
 
-    after do
-      Object.const_set :Time, @time
+    it "should sign subscription request" do
+      signature = Recurly.js.sign_subscription('gold', '123')
+      signature.should == "68d95a0bbc289e564bcb519511676d84d4a4cb96|account[account_code]=123&subscription[plan_code]=gold&timestamp=1329942896"
     end
 
-    it "must generate proper signatures" do
-      sig = sign.call 'update', :a => 'foo', :b => 'bar'
-      sig.must_equal signature
-    end
-
-    it "must sign subscription" do
-      sig = js.method(:sign_subscription).call 'plan','acc', {:a => {:a1 => 'v'}}
-      sig.must_equal 'aef4df3aabfdfc414a6700b2a001231a4c0c91bd-1312806801+a.a1'
-    end
-
-    it "must sign billing_info" do
-      sig = js.method(:sign_billing_info).call 'acc', :a => { :a1 => 'v' }
-      sig.must_equal '796e4f02e24ee5fc8a248f8ff123749e08a033da-1312806801+a.a1'
-    end
-
-    it "must sign transaction" do
-      sig = js.method(:sign_transaction).call(
-        50_00, 'USD', 'acc', :a => { :a1 => 'v' }
-      )
-      sig.must_equal '16754dea33128cb3a83bcd7ca937ca45742739e7-1312806801+a.a1'
-    end
-
-    it "must validate proper signatures" do
-      verify.call 'update', :a => 'foo', :b => 'bar', :signature => signature
-    end
-
-    it "must reject invalid signatures" do
-      proc {
-        verify.call 'update', :a => 'foo', :b => 'bar', :signature => 'baz'
-      }.must_raise js::RequestForgery
-    end
-
-    it "must merge extras into hmac and append their keys to the signature" do
-      signed = sign.call('update', { :a => 'foo', :b => 'bar' },
-        { :acct => { :name => 'joe' } }
-      )
-      signed.must_equal(
-        "1b85c19394eaea131a8d43eaada91634625d8f18-#{timestamp}+acct.name"
-      )
-    end
-
-    it "must reject a stale signature" do
-      Time.now = @time.at(timestamp + 7200)
-      proc {
-        verify.call(
-          'update', :a => 'foo', :b => 'bar', :signature => signature
-        )
-      }.must_raise js::RequestForgery
-    end
-
-    it "must reject time traveling signatures from the future" do
-      Time.now = @time.at(timestamp - 7200)
-      proc {
-        verify.call(
-          'update', :a => 'foo', :b => 'bar', :signature => signature
-        )
-      }.must_raise js::RequestForgery
-    end
-    it "must verify billing info" do
-      js.verify_billing_info!(
-        'signature' => "07e7bea6a5bcb65d8dd93f8e314b2dab686c8ca8-#{timestamp}"
-      )
-    end
-
-    it "must verify subscriptions" do
-      js.verify_subscription!(
-        'signature' => "1b0cddbdfaabd9e1a1e3e3b309f5809f66d04515-#{timestamp}"
-      )
-    end
-
-    it "must verify transactions" do
-      js.verify_transaction!(
-        'signature' => "771f82bd339bbad93e5bd9eae279cfdeb9c4773b-#{timestamp}"
-      )
+    it "should sign transaction request" do
+      signature = Recurly.js.sign_transaction(5000, 'USD', '123')
+      signature.should == "5dcbd65498c62c552a6f78edfb117cada8cb4f00|account[account_code]=123&timestamp=1329942896&transaction[amount_in_cents]=5000&transaction[currency]=USD"
     end
   end
-
-  describe "collect_keypaths" do
-    let(:collect_keypaths) { js.method :collect_keypaths }
-    it "must collect keypaths" do
-      test_obj = {:a => { :a1 => 'a1', :a2 => 'a2' }, :b => 'b' }
-      keypaths = collect_keypaths.call(test_obj)
-      keypaths.must_equal ['a.a1','a.a2','b']
-    end
-  end
-
 end
