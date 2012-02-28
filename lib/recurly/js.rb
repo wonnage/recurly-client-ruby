@@ -1,4 +1,5 @@
 require 'openssl'
+require 'recurly/js/deprecated_methods'
 
 module Recurly
   # A collection of helper methods to use to verify
@@ -56,54 +57,6 @@ EOE
         end
 
         params
-      end
-
-      # @deprecated Use {.sign!} instead.
-      # @return [String]
-      def sign_subscription plan_code, account_code = nil
-        sign(
-          'account'      => { 'account_code' => account_code },
-          'subscription' => { 'plan_code'    => plan_code }
-        )
-      end
-
-      # @deprecated Use {.sign!} instead.
-      # @return [String]
-      def sign_billing_info account_code
-        sign('account' => { 'account_code' => account_code })
-      end
-
-      # @deprecated Use {.sign!} instead.
-      # @return [String]
-      def sign_transaction(amount_in_cents, currency = nil, account_code = nil)
-        sign(
-          'account'     => { 'account_code' => account_code },
-          'transaction' => {
-            'amount_in_cents' => amount_in_cents,
-            'currency'        => currency || Recurly.default_currency
-          }
-        )
-      end
-
-      # @deprecated Use {#validate_signature!} instead.
-      # @return [true]
-      # @raise [RequestForgery] If verification fails.
-      def verify_subscription! params
-        verify_signature! params[:signature]
-      end
-
-      # @deprecated Use {#validate_signature!} instead.
-      # @return [true]
-      # @raise [RequestForgery] If verification fails.
-      def verify_billing_info! params
-        verify_signature! params[:signature]
-      end
-
-      # @deprecated Use {#validate_signature!} instead.
-      # @return [true]
-      # @raise [RequestForgery] If verification fails.
-      def verify_transaction! params
-        verify_signature! params[:signature]
       end
 
       # @return [String]
