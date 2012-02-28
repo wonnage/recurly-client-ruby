@@ -28,7 +28,7 @@ module Recurly
       def sign data
         data[:timestamp] ||= Time.now.to_i
         unsigned = to_query data
-        signed = hash unsigned
+        signed = digest unsigned
         [signed, unsigned].join '|'
       end
 
@@ -38,7 +38,7 @@ module Recurly
       # @return [Hash] Data signed in the signature
       def verify! signature
         signature, data = signature.split '|'
-        expected = hash data
+        expected = digest data
 
         if signature != expected
           raise RequestForgery, <<EOE.chomp
@@ -76,8 +76,8 @@ EOE
         end
       end
 
-      def hash data
-        OpenSSL::HMAC.hexdigest 'sha1', private_key, data
+      def digest string
+        OpenSSL::HMAC.hexdigest 'sha1', private_key, string
       end
 
       def from_query string
