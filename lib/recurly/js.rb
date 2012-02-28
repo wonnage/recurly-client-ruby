@@ -120,7 +120,6 @@ EOE
         when Array
           object.map { |o| to_query o, "#{key}[]" } * '&'
         else
-          # return "#{key}=#{object}"
           "#{CGI.escape key.to_s}=#{CGI.escape object.to_s}"
         end
       end
