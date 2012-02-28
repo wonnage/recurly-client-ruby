@@ -47,8 +47,7 @@ EOE
         end
         params = from_query data
 
-        timestamp = params['timestamp']
-        age = Time.now.to_i - timestamp.to_i
+        age = Time.now.to_i - params['timestamp'].to_i
         if age > 3600 || age < -3600
           raise RequestTooOld, <<EOE.chomp
 Timestamp is over an hour old. The server timezone may be incorrect or this \
