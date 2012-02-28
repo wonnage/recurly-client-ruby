@@ -81,7 +81,7 @@ EOE
       end
 
       def from_query string
-        string.scan(/([^=&]+)=([^=&]+)/).inject({}) do |hash, pair|
+        string.scan(/([^=&]+)=([^=&]*)/).inject({}) do |hash, pair|
           key, value = pair.map(&CGI.method(:unescape))
           keypath, array = key.scan(/[^\[\]]+/), key[/\[\]$/]
           keypath.inject(hash) do |nest, component|
