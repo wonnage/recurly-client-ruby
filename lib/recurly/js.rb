@@ -1,5 +1,4 @@
 require 'openssl'
-require 'addressable/uri'
 
 module Recurly
   # A collection of helper methods to use to verify
@@ -10,7 +9,7 @@ module Recurly
     end
 
     # Raised when the timestamp is over an hour old. Prevents replay attacks.
-    class RequestTooOldError < RequestForgery
+    class RequestTooOld < RequestForgery
     end
 
     class << self
@@ -22,70 +21,68 @@ module Recurly
         )
       end
       attr_writer :private_key
-      
+
       # Create a signature for a given hash for Recurly.js
       # @param [Hash] Hash of data to sign as protected data
-      def generate_signature(data_to_protect)
-        data_string = convert_to_query_string(data_to_protect)
-        signature = hash(data_string)
-        [signature, data_string].join "|"
+      def sign data
+        data[:timestamp] ||= Time.now.to_i
+        unsigned = to_query data
+        signed = hash unsigned
+        [signed, unsigned].join '|'
       end
 
-      # Validate the signature string from Recurly.js and return the signed attributes.
+      # Verify the signature string from Recurly.js and return the signed
+      # attributes.
       # @param [String] Recurly.js signature to validate
       # @return [Hash] Data signed in the signature
-      def validate_signature! signature_with_data
-        signature, data_string = signature_with_data.split('|', 2)
-        expected_signature = hash(data_string)
+      def verify! signature
+        signature, data = signature.split '|'
+        expected = hash data
 
-        raise RequestForgery.new "Recurly.js signature forged or incorrect private key" if signature != expected_signature
+        if signature != expected
+          raise RequestForgery, <<EOE.chomp
+Recurly.js signature forged or incorrect private key.
+EOE
+        end
+        params = from_query data
 
-        address = Addressable::URI.new
-        address.query = data_string
-        data_hash = address.query_values
-
-        if data_hash['timestamp'] && (time_difference(data_hash['timestamp']) > 3600)
-          raise RequestTooOldError.new "Timestamp is over an hour old. The server timezone may be incorrect or this may be a replay attack."
+        timestamp = params['timestamp']
+        age = Time.now.to_i - timestamp.to_i
+        if age > 3600 || age < -3600
+          raise RequestTooOld, <<EOE.chomp
+Timestamp is over an hour old. The server timezone may be incorrect or this \
+may be a replay attack.
+EOE
         end
 
-        data_hash
+        params
       end
 
-      # @deprecated Use {#generate_signature} instead.
+      # @deprecated Use {.sign!} instead.
       # @return [String]
       def sign_subscription plan_code, account_code = nil
-        generate_signature({
-          'account' => {
-            'account_code' => account_code
-          },
-          'subscription' => {
-            'plan_code' => plan_code
-          }
-        })
+        sign(
+          'account'      => { 'account_code' => account_code },
+          'subscription' => { 'plan_code'    => plan_code }
+        )
       end
 
-      # @deprecated Use {#generate_signature} instead.
+      # @deprecated Use {.sign!} instead.
       # @return [String]
       def sign_billing_info account_code
-        generate_signature({
-          'account' => {
-            'account_code' => account_code
-          }
-        })
+        sign('account' => { 'account_code' => account_code })
       end
 
-      # @deprecated Use {#generate_signature} instead.
+      # @deprecated Use {.sign!} instead.
       # @return [String]
       def sign_transaction(amount_in_cents, currency = nil, account_code = nil)
-        generate_signature({
-          'account' => {
-            'account_code' => account_code
-          },
+        sign(
+          'account'     => { 'account_code' => account_code },
           'transaction' => {
             'amount_in_cents' => amount_in_cents,
-            'currency' => currency || Recurly.default_currency
+            'currency'        => currency || Recurly.default_currency
           }
-        })
+        )
       end
 
       # @deprecated Use {#validate_signature!} instead.
@@ -116,41 +113,32 @@ module Recurly
 
       private
 
-      def hash(protected_string)
-        OpenSSL::HMAC.hexdigest('sha1', private_key, protected_string)
-      end
-
-      # convert data hash to a form encoded string
-      def convert_to_query_string(data = {})
-        data = process_data(data.dup)
-        data[:timestamp] = Time.now.to_i
-
-        address = Addressable::URI.new
-        address.query_values = data
-        address.query
-      end
-
-      # recursively process the query data (running to_s on values)
-      def process_data(data = {})
-        return data unless data.is_a?(Hash)
-        data.each do |key, val|
-          if val.is_a?(Hash)
-            data[key] = process_data(val)
-          elsif val.is_a?(String)
-            data[key] = val.to_s
-          elsif val.is_a?(Enumerable)
-            values = Hash.new
-            val.each_with_index{ |item, index| values[index] = process_data(item) }
-            data[key] = values
-          else
-            data[key] = val.to_s
-          end
+      def to_query object, key = nil
+        case object
+        when Hash
+          object.map { |k, v| to_query v, key ? "#{key}[#{k}]" : k }.sort * '&'
+        when Array
+          object.map { |o| to_query o, "#{key}[]" } * '&'
+        else
+          # return "#{key}=#{object}"
+          "#{CGI.escape key.to_s}=#{CGI.escape object.to_s}"
         end
       end
 
-      # absolute number of seconds between the timestamp and now
-      def time_difference(timestamp)
-        (timestamp.to_i - Time.now.to_i).abs
+      def hash data
+        OpenSSL::HMAC.hexdigest 'sha1', private_key, data
+      end
+
+      def from_query string
+        string.scan(/([^=&]+)=([^=&]+)/).inject({}) do |hash, pair|
+          key, value = pair.map(&CGI.method(:unescape))
+          keypath, array = key.scan(/[^\[\]]+/), key[/\[\]$/]
+          keypath.inject(hash) do |nest, component|
+            next nest[component] ||= {} unless keypath.last == component
+            array ? (nest[component] ||= []) << value : nest[component] = value
+          end
+          hash
+        end
       end
     end
   end
