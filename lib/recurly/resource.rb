@@ -369,8 +369,8 @@ module Recurly
         xml = XML.new xml
         if xml.name == member_name
           record = new
-        elsif Recurly.const_defined?(class_name = Helper.classify(xml.name))
-          record = Recurly.const_get(class_name).new
+        elsif Recurly.const_defined?(class_name = Helper.classify(xml.name), false)
+          record = Recurly.const_get(class_name, false).new
         elsif root = xml.root and root.elements.empty?
           return XML.cast root
         else
@@ -395,7 +395,7 @@ module Recurly
 
           if el.children.empty? && href = el.attribute('href')
             resource_class = Recurly.const_get(
-              Helper.classify(el.attribute('type') || el.name)
+              Helper.classify(el.attribute('type') || el.name), false
             )
             record[el.name] = case el.name
             when *associations[:has_many]
@@ -461,7 +461,7 @@ module Recurly
         self::Associations.module_eval {
           define_method(member_name) { self[member_name] }
           if options.key?(:readonly) && options[:readonly] == false
-            associated = Recurly.const_get Helper.classify(member_name)
+            associated = Recurly.const_get Helper.classify(member_name), false
             define_method("#{member_name}=") { |member|
               associated_uri = "#{path}/#{member_name}"
               self[member_name] = case member
@@ -939,7 +939,7 @@ module Recurly
       when Array
         value.map { |each| fetch_association Helper.singularize(name), each }
       when Hash
-        Recurly.const_get(Helper.classify(name)).send :new, value
+        Recurly.const_get(Helper.classify(name), false).send :new, value
       when Proc, Resource, Resource::Pager, nil
         value
       else
